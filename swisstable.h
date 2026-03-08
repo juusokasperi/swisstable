@@ -314,7 +314,7 @@ bool st_insert(SwissTable *table, void *key, void *value)
 	for (size_t probe = 0; probe < table->capacity; ++probe)
 	{
 		size_t		pos = (idx + probe) & (table->capacity - 1);
-		size_t		grp_start = pos & ~15ULL; // align to 16
+		size_t		grp_start = (pos / 16) * 16; // align to 16
 
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
@@ -367,7 +367,7 @@ void *st_get(SwissTable *table, void *key)
 	for (size_t probe = 0; probe < table->capacity; ++probe)
 	{
 		size_t	pos = (idx + probe) & (table->capacity - 1);
-		size_t	grp_start = pos & ~15ULL;
+		size_t	grp_start = (pos / 16) * 16;
 		
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
@@ -402,7 +402,7 @@ bool st_remove(SwissTable *table, void *key)
 	for (size_t probe = 0; probe < table->capacity; ++probe)
 	{
 		size_t		pos = (idx + probe) & (table->capacity - 1);
-		size_t		grp_start = pos & ~15ULL;
+		size_t		grp_start = (pos / 16) * 16;
 
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
