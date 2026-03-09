@@ -10,9 +10,10 @@
 #define CTRL_DELETED 0xFE
 #define CTRL_SENTINEL 0xFF
 
+#define GROUP_WIDTH 16
+
 typedef uint64_t (*HashFn)(const void *key, size_t key_size);
 typedef bool (*EqFn)(const void *a, const void *b, size_t key_size);
-
 typedef void (*KeyCopyFn)(void *dst, const void *src, Allocator alloc);
 typedef void (*KeyDestroyFn)(void *key, Allocator alloc);
 
@@ -44,16 +45,11 @@ typedef struct {
 	Allocator	alloc;
 } SwissTable;
 
-/* === */
-/* API */
-/* === */
-
 /* ============== */
 /* Core functions */
 /* ============== */
 
 // Initialize empty table with custom Allocator
-// Starts with capacity 0, lazy-allocation on first insert
 SwissTable	st_init(Allocator alloc, size_t key_size, size_t value_size, KeyOps key_ops);
 
 // Free all memory
@@ -63,15 +59,12 @@ void		st_destroy(SwissTable *table);
 void		st_clear(SwissTable *table);
 
 // Insert or update key-value pair
-// Return true on success, false on alloc failure
-// Grows table automatically when load exceeds 87.5%
 bool		st_insert(SwissTable *table, const void *key, void *value);
 
 // Get value pointer for key, NULL if not found
 void		*st_get(SwissTable *table, const void *key);
 
-// Remove key-value pair,
-// returns true if removed, false if key did not exist
+// Remove key-value pair, returns true if removed, false if key did not exist
 bool		st_remove(SwissTable *table, const void *key);
 
 // Check if key exists (same as checking if get returns null)
@@ -81,12 +74,10 @@ bool		st_contains(SwissTable *table, const void *key);
 /* Capacity management */
 /* =================== */
 
+// Pre-allocate desired capacity
 bool		st_reserve(SwissTable *table, size_t min_capacity);
-// void		st_shrink_to_fit(SwissTable *table);
 
-/* ================= */
-/* Utility functions */
-/* ================= */
+// void		st_shrink_to_fit(SwissTable *table);
 
 // Print capacity, load factor, etc. (debugging)
 void		st_print_stats(SwissTable *table);
@@ -99,37 +90,40 @@ void		st_print_stats(SwissTable *table);
 #define st_init_malloc(K, V) \
 	st_init(malloc_allocator(), sizeof(K), sizeof(V), default_key_ops())
 
+// Arena arena = arena_init(PROT_READ | PROT_WRITE);
+// SwissTable map = st_init_alloc(arena_allocator(&arena), int, int);
 #define st_init_alloc(A, K, V) \
 	st_init((A), sizeof(K), sizeof(V), default_key_ops())
 
-/* Initializes a default malloc-allocating table with string keys */
+// SwissTable map = st_init_str_malloc(int);
 #define st_init_str_malloc(V) \
 	st_init(malloc_allocator(), sizeof(StringKey), sizeof(V), string_key_ops())
 
-/* Initializes a custom allocating table with string keys */
+// SwissTable map = st_init_str_alloc(arena_allocator(&arena), int);
 #define st_init_str_alloc(A, V) \
 	st_init((A), sizeof(StringKey), sizeof(V), string_key_ops())
 
-// if (!st_insert_t(&map, int, int, 42, 100))
-//   error_handling..
+// st_insert_t(&map, int, int, 42, 100)
 #define st_insert_t(table, K, V, k, v) \
 	st_insert((table), &(K){k}, &(V){v})
 
-/* Returns a typed pointer */
-// int *val = st_get_t(&map, int, int, 42);
+// st_get_t(&map, int, int, 42)
 #define st_get_t(table, K, V, k) \
 	((V*)st_get((table), &(K){k}))
 
-/* Easy insert/get/remove/contains for string keys */
+// st_insert_str(&map, "hello", int, 42)
 #define st_insert_str(table, str, V, val) \
 	st_insert((table), &(StringKey){strlen(str), (char *)(str)}, &(V){val})
 
+// st_get_str(&map, int, "hello")
 #define st_get_str(table, V, str) \
 	((V*)st_get((table), &(StringKey){strlen(str), (char *)(str)}))
 
+// st_remove_str(&map, "hello")
 #define st_remove_str(table, str) \
 	st_remove((table), &(StringKey){strlen(str), (char *)(str)})
 
+// st_contains_str(&map, "hello")
 #define st_contains_str(table, str) \
 	st_contains((table), &(StringKey){strlen(str), (char *)(str)})
 
@@ -144,6 +138,7 @@ void		st_print_stats(SwissTable *table);
 
 #endif // SWISSTABLE_H
 
+// #define SWISSTABLE_IMPLEMENTATION
 #ifdef SWISSTABLE_IMPLEMENTATION
 # ifndef SWISSTABLE_IMPLEMENTATION_GUARD
 # define SWISSTABLE_IMPLEMENTATION_GUARD
@@ -196,10 +191,7 @@ static inline uint32_t match_byte(const uint8_t *ctrl, uint8_t target)
 	return (mask);
 }
 
-static inline uint32_t match_empty(const uint8_t *ctrl)
-{
-	return (match_byte(ctrl, CTRL_EMPTY));
-}
+static inline uint32_t match_empty(const uint8_t *ctrl) { return (match_byte(ctrl, CTRL_EMPTY)); }
 
 /* ============== */
 /* Hash functions */
@@ -221,16 +213,8 @@ uint64_t hash_bytes(const void *data, size_t len)
 
 size_t H1(uint64_t hash, size_t capacity) { return (hash & (capacity - 1)); }
 uint8_t H2(uint64_t hash) { return ((hash >> 57) & 0x7F); }
-
-uint64_t default_hash(const void *data, size_t len)
-{
-	return (hash_bytes(data, len));
-}
-
-bool default_eq(const void *a, const void *b, size_t len)
-{
-	return (memcmp(a, b, len) == 0);
-}
+uint64_t default_hash(const void *data, size_t len) { return (hash_bytes(data, len)); }
+bool default_eq(const void *a, const void *b, size_t len) { return (memcmp(a, b, len) == 0); }
 
 uint64_t stringkey_hash(const void *key, size_t _)
 {
@@ -250,6 +234,7 @@ bool stringkey_eq(const void *a, const void *b, size_t _)
 /* ================ */
 /* KeyOps functions */
 /* ================ */
+
 KeyOps default_key_ops(void)
 {
 	KeyOps ops;
@@ -301,7 +286,7 @@ bool allocate_table(SwissTable *table, size_t capacity)
 	if (capacity & (capacity - 1))
 		return (false);
 
-	size_t	ctrl_size = capacity + 16 + 1; // capacity + 16 for SIMD over flow + 1 sentinel
+	size_t	ctrl_size = capacity + GROUP_WIDTH + 1; // capacity + 16 for SIMD overflow + 1 sentinel
 	uint8_t	*new_ctrl = (uint8_t *)table->alloc.alloc(table->alloc.ctx, ctrl_size, 0);
 	if (!new_ctrl)
 		return (false);
@@ -426,7 +411,7 @@ void st_clear(SwissTable *table)
 		clear_keys(table);
 	if (table->ctrl)
 	{
-		size_t ctrl_size = table->capacity + 16 + 1;
+		size_t ctrl_size = table->capacity + GROUP_WIDTH + 1;
 		memset(table->ctrl, CTRL_EMPTY, ctrl_size);
 		table->ctrl[table->capacity] = CTRL_SENTINEL;
 	}
