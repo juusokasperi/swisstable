@@ -142,12 +142,6 @@ void		st_print_stats(SwissTable *table);
         } \
     }
 
-uint64_t	hash_bytes(const void *data, size_t len);
-size_t		H1(uint64_t hash, size_t capacity);
-uint8_t		H2(uint64_t hash);
-bool		allocate_table(SwissTable *table, size_t capacity);
-
-
 #endif // SWISSTABLE_H
 
 #ifdef SWISSTABLE_IMPLEMENTATION
@@ -211,6 +205,23 @@ static inline uint32_t match_empty(const uint8_t *ctrl)
 /* Hash functions */
 /* ============== */
 
+uint64_t hash_bytes(const void *data, size_t len)
+{
+	uint64_t		hash = 14695981039346656037ULL;
+	uint64_t		prime = 1099511628211ULL;
+	const uint8_t	*bytes = (const uint8_t *)data;
+
+	for (size_t i = 0; i < len; ++i)
+	{
+		hash ^= bytes[i];
+		hash *= prime;
+	}
+	return (hash);
+}
+
+size_t H1(uint64_t hash, size_t capacity) { return (hash & (capacity - 1)); }
+uint8_t H2(uint64_t hash) { return ((hash >> 57) & 0x7F); }
+
 uint64_t default_hash(const void *data, size_t len)
 {
 	return (hash_bytes(data, len));
@@ -235,23 +246,6 @@ bool stringkey_eq(const void *a, const void *b, size_t _)
 		return (false);
 	return (memcmp(ka->str, kb->str, ka->len) == 0);
 }
-
-uint64_t hash_bytes(const void *data, size_t len)
-{
-	uint64_t		hash = 14695981039346656037ULL;
-	uint64_t		prime = 1099511628211ULL;
-	const uint8_t	*bytes = (const uint8_t *)data;
-
-	for (size_t i = 0; i < len; ++i)
-	{
-		hash ^= bytes[i];
-		hash *= prime;
-	}
-	return (hash);
-}
-
-size_t H1(uint64_t hash, size_t capacity) { return (hash & (capacity - 1)); }
-uint8_t H2(uint64_t hash) { return ((hash >> 57) & 0x7F); }
 
 /* ================ */
 /* KeyOps functions */
