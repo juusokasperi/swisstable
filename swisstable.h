@@ -288,32 +288,28 @@ bool allocate_table(SwissTable *table, size_t capacity)
 
 	size_t	ctrl_size = capacity + GROUP_WIDTH + 1; // capacity + 16 for SIMD overflow + 1 sentinel
 	uint8_t	*new_ctrl = (uint8_t *)table->alloc.alloc(table->alloc.ctx, ctrl_size, 0);
-	if (!new_ctrl)
-		return (false);
-
-	memset(new_ctrl, CTRL_EMPTY, ctrl_size);
-	new_ctrl[capacity] = CTRL_SENTINEL;
-
 	void	*new_keys = table->alloc.alloc(table->alloc.ctx, capacity * table->key_size, 0);
 	void	*new_values = table->alloc.alloc(table->alloc.ctx, capacity * table->value_size, 0);
 
-	if (!new_keys || !new_values)
+	if (!new_ctrl || !new_keys || !new_values)
 	{
 		if (table->alloc.free)
 		{
-			if (new_keys)
-				table->alloc.free(table->alloc.ctx, new_keys);
-			if (new_values)
-				table->alloc.free(table->alloc.ctx, new_values);
-			table->alloc.free(table->alloc.ctx, new_ctrl);
-			return (false);
+			if (new_ctrl)	table->alloc.free(table->alloc.ctx, new_ctrl);
+			if (new_keys)	table->alloc.free(table->alloc.ctx, new_keys);
+			if (new_values)	table->alloc.free(table->alloc.ctx, new_values);
 		}
+		return (false);
 	}
+
+	memset(new_ctrl, CTRL_EMPTY, ctrl_size);
+	new_ctrl[capacity] = CTRL_SENTINEL;
 
 	table->ctrl = new_ctrl;
 	table->keys = new_keys;
 	table->values = new_values;
 	table->capacity = capacity;
+
 	return (true);
 }
 
