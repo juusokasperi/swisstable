@@ -206,7 +206,7 @@ void test_with_arena()
 	print_separator("TEST: Arena Allocator");
 	
 	Arena arena = arena_init(PROT_READ | PROT_WRITE);
-	SwissTable map = st_init(arena_allocator(&arena), sizeof(int), sizeof(int));
+	SwissTable map = st_init_alloc(arena_allocator(&arena), int, int);
 	
 	info("Reserving for 500 entries (one allocation)");
 	st_reserve(&map, 500);
@@ -229,7 +229,7 @@ void test_with_arena()
 	info("Testing ArenaTemp with hash table");
 	ArenaTemp temp = arena_temp_begin(&arena);
 	{
-		SwissTable temp_map = st_init(arena_allocator(&arena), sizeof(int), sizeof(int));
+		SwissTable temp_map = st_init_alloc(arena_allocator(&arena), int, int);
 		for (int i = 0; i < 100; i++)
 			st_insert_t(&temp_map, int, int, i, i);
 		info("Temp map size: %zu", temp_map.size);
@@ -340,6 +340,109 @@ void stress_test()
 	success("Stress test passed");
 }
 
+void test_string_keys()
+{
+    print_separator("TEST: String Keys");
+
+    SwissTable map = st_init_str_malloc(int);
+
+    info("Inserting string keys");
+    assert(st_insert_str(&map, "hello", int, 42));
+    assert(st_insert_str(&map, "world", int, 99));
+    assert(st_insert_str(&map, "foo", int, 123));
+    assert(st_insert_str(&map, "bar", int, 456));
+
+    info("Checking contains()");
+    assert(st_contains_str(&map, "hello"));
+    assert(st_contains_str(&map, "world"));
+    assert(!st_contains_str(&map, "baz"));
+    success("Contains checks passed");
+
+    info("Retrieving values");
+    int *val = st_get_str(&map, int, "hello");
+    assert(val && *val == 42);
+    success("hello = %d", *val);
+
+    val = st_get_str(&map, int, "world");
+    assert(val && *val == 99);
+    success("world = %d", *val);
+
+    val = st_get_str(&map, int, "foo");
+    assert(val && *val == 123);
+    success("foo = %d", *val);
+
+    val = st_get_str(&map, int, "bar");
+    assert(val && *val == 456);
+    success("bar = %d", *val);
+
+    info("Updating value of 'hello' to 777");
+    assert(st_insert_str(&map, "hello", int, 777));
+    val = st_get_str(&map, int, "hello");
+    assert(val && *val == 777);
+    success("Updated hello = %d", *val);
+
+    info("Removing 'world'");
+    assert(st_remove_str(&map, "world"));
+    assert(!st_contains_str(&map, "world"));
+    success("'world' removed successfully");
+
+    st_print_stats(&map);
+    st_destroy(&map);
+    success("String key test passed");
+}
+
+void stress_test_strings()
+{
+    print_separator("TEST: String Key Stress Test (10,000 entries)");
+
+    SwissTable map = st_init_str_malloc(int);
+
+    info("Generating and inserting 10,000 string keys");
+    char buffer[64];
+    for (int i = 0; i < 10000; ++i)
+    {
+        snprintf(buffer, sizeof(buffer), "key_%05d", i);
+        assert(st_insert_str(&map, buffer, int, i * 3));
+    }
+
+    info("Verifying all 10,000 entries");
+    for (int i = 0; i < 10000; i++)
+    {
+        snprintf(buffer, sizeof(buffer), "key_%05d", i);
+        int *val = st_get_str(&map, int, buffer);
+        assert(val != NULL);
+        assert(*val == i * 3);
+    }
+
+    success("All 10,000 string entries verified");
+
+    info("Removing every 4th entry (2,500 removals)");
+    for (int i = 0; i < 10000; i += 4)
+    {
+        snprintf(buffer, sizeof(buffer), "key_%05d", i);
+        assert(st_remove_str(&map, buffer));
+    }
+
+    info("Verifying remaining entries");
+    for (int i = 0; i < 10000; i++)
+    {
+        snprintf(buffer, sizeof(buffer), "key_%05d", i);
+        int *val = st_get_str(&map, int, buffer);
+        if (i % 4 == 0)
+            assert(val == NULL);
+        else
+        {
+            assert(val != NULL);
+            assert(*val == i * 3);
+        }
+    }
+    success("Remaining entries verified after removals");
+
+    st_print_stats(&map);
+    st_destroy(&map);
+    success("String key stress test passed");
+}
+
 int main(void)
 {
 	printf("\n PRPL");
@@ -355,6 +458,8 @@ int main(void)
 	test_iteration();
 	test_collisions();
 	stress_test();
+	test_string_keys();
+	stress_test_strings();
 	
 	print_separator("ALL TESTS PASSED! ✓");
 	
