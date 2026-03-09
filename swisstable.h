@@ -315,8 +315,10 @@ bool allocate_table(SwissTable *table, size_t capacity)
 
 static void st_rehash(SwissTable *table, size_t new_capacity)
 {
+	if (new_capacity == 0)
+		return;
+
 	SwissTable old = *table;
-	
 	table->size = 0;
 	if (!allocate_table(table, new_capacity))
 	{
