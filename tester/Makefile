@@ -20,6 +20,7 @@ benchmark:
 clean: fclean
 
 fclean:
-	rm $(NAME) bench_neon bench_scalar
+	rm $(NAME) bench_neon bench_scalar results_neon.txt results_scalar.txt
+
 
 re: fclean all
