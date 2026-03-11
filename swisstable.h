@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "arena_allocator.h"
+#include "allocator.h"
 
 #define CTRL_EMPTY 0x80
 #define CTRL_DELETED 0xFE
