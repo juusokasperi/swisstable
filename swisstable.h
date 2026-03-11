@@ -36,6 +36,7 @@ typedef struct {
 
 	size_t		capacity;
 	size_t		size;
+	size_t		deleted_count;
 
 	size_t		key_size;
 	size_t		value_size;
@@ -216,6 +217,7 @@ static inline uint32_t match_byte(const uint8_t *ctrl, uint8_t target)
 }
 
 static inline uint32_t match_empty(const uint8_t *ctrl) { return (match_byte(ctrl, CTRL_EMPTY)); }
+static inline uint32_t match_deleted(const uint8_t *ctrl) { return (match_byte(ctrl, CTRL_DELETED)); }
 /* ================ */
 /* Internal helpers */
 /* ================ */
@@ -360,7 +362,7 @@ bool allocate_table(SwissTable *table, size_t capacity)
 	}
 
 	memset(new_ctrl, CTRL_EMPTY, ctrl_size);
-	new_ctrl[capacity] = CTRL_SENTINEL;
+	new_ctrl[capacity + GROUP_WIDTH] = CTRL_SENTINEL;
 
 	table->ctrl = new_ctrl;
 	table->keys = new_keys;
@@ -400,6 +402,7 @@ static void st_rehash(SwissTable *table, size_t new_capacity)
 	}
 
 	table->key_ops.copy = copy;
+	table->deleted_count = 0;
 
 	if (old.alloc.free)
 	{
@@ -423,6 +426,7 @@ SwissTable	st_init(Allocator alloc, size_t key_size, size_t value_size, KeyOps k
 
 	st.capacity = 0;
 	st.size = 0;
+	st.deleted_count = 0;
 	st.key_size = key_size;
 	st.value_size = value_size;
 
@@ -468,14 +472,15 @@ void st_clear(SwissTable *table)
 	{
 		size_t ctrl_size = table->capacity + GROUP_WIDTH + 1;
 		memset(table->ctrl, CTRL_EMPTY, ctrl_size);
-		table->ctrl[table->capacity] = CTRL_SENTINEL;
+		table->ctrl[table->capacity + GROUP_WIDTH] = CTRL_SENTINEL;
 	}
 	table->size = 0;
+	table->deleted_count = 0;
 }
 
 bool st_insert(SwissTable *table, const void *key, void *value)
 {
-	if (table->size * 8 >= table->capacity * 7 || table->capacity == 0)
+	if ((table->size + table->deleted_count) * 8 >= table->capacity * 7 || table->capacity == 0)
 	{
 		size_t new_capacity = table->capacity == 0 ? 16 : table->capacity * 2;
 		st_rehash(table, new_capacity);
@@ -487,18 +492,21 @@ bool st_insert(SwissTable *table, const void *key, void *value)
 	uint8_t		h2 = H2(hash);
 	size_t		idx = H1(hash, table->capacity);
 
-	for (size_t probe = 0; probe < table->capacity; ++probe)
+	size_t		first_deleted = SIZE_MAX;
+	size_t		target_slot = SIZE_MAX;
+
+	for (size_t probe = 0; probe < table->capacity; probe += 16)
 	{
-		size_t		pos = (idx + probe) & (table->capacity - 1);
-		size_t		grp_start = pos & ~15ULL; // align to 16
+		size_t		grp_start = (idx + probe) & (table->capacity - 1);
 
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
+		uint32_t	deleted = match_deleted(&table->ctrl[grp_start]);
 
 		while (matches)
 		{
 			int		offset = trailing_zeros(matches);
-			size_t	candidate = grp_start + offset;
+			size_t	candidate = (grp_start + offset) & (table->capacity - 1);
 
 			void	*candidate_key = (char *)table->keys + candidate * table->key_size;
 			if (table->key_ops.eq(candidate_key, key, table->key_size))
@@ -511,27 +519,50 @@ bool st_insert(SwissTable *table, const void *key, void *value)
 			matches &= matches - 1; // clear lowest bit
 		}
 
+		if (first_deleted == SIZE_MAX && deleted)
+		{
+			int	offset = trailing_zeros(deleted);
+			first_deleted = (grp_start + offset) & (table->capacity - 1);
+		}
+
 		if (empties)
 		{
-			int		offset = trailing_zeros(empties);
-			size_t	slot = grp_start + offset;
-
-			table->ctrl[slot] = h2;
-			void	*key_slot = (char *)table->keys + slot * table->key_size;
-			if (table->key_ops.copy)
-				table->key_ops.copy(key_slot, key, table->alloc);
+			if (first_deleted != SIZE_MAX)
+				target_slot = first_deleted;
 			else
-				memcpy(key_slot, key, table->key_size);
-			memcpy((char *)table->values + slot * table->value_size, value, table->value_size);
-			table->size++;
-
-			// Mirror to overflow area for SIMD wraparound
-			if (slot < 15)
-				table->ctrl[table->capacity + slot] = h2;
-
-			return (true);
+			{
+				int	offset = trailing_zeros(empties);
+				target_slot = (grp_start + offset) & (table->capacity - 1);
+			}
+			break;
 		}
+
 	}
+	// If loop finished without hitting an empty slot, use the deleted slot that was found
+	if (target_slot == SIZE_MAX && first_deleted != SIZE_MAX)
+		target_slot = first_deleted;
+
+	// Insertion
+	if (target_slot != SIZE_MAX)
+	{
+		if (table->ctrl[target_slot] == CTRL_DELETED)
+			table->deleted_count--; // Reusing a deleted slot
+		table->ctrl[target_slot] = h2;
+		void	*key_slot = (char *)table->keys + target_slot * table->key_size;
+		if (table->key_ops.copy)
+			table->key_ops.copy(key_slot, key, table->alloc);
+		else
+			memcpy(key_slot, key, table->key_size);
+		memcpy((char *)table->values + target_slot * table->value_size, value, table->value_size);
+		table->size++;
+
+		// Mirror to overflow area for SIMD wraparound
+		if (target_slot < GROUP_WIDTH)
+				table->ctrl[table->capacity + target_slot] = h2;
+
+		return (true);
+	}
+
 	return (false); // Table full (should not happen)
 }
 
@@ -544,10 +575,9 @@ void *st_get(SwissTable *table, const void *key)
 	uint8_t		h2 = H2(hash);
 	size_t		idx = H1(hash, table->capacity);
 
-	for (size_t probe = 0; probe < table->capacity; ++probe)
+	for (size_t probe = 0; probe < table->capacity; probe += 16)
 	{
-		size_t	pos = (idx + probe) & (table->capacity - 1);
-		size_t	grp_start = pos & ~15ULL;
+		size_t		grp_start = (idx + probe) & (table->capacity - 1);
 		
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
@@ -555,7 +585,7 @@ void *st_get(SwissTable *table, const void *key)
 		while (matches)
 		{
 			int		offset = trailing_zeros(matches);
-			size_t	candidate = grp_start + offset;
+			size_t	candidate = (grp_start + offset) & (table->capacity - 1);
 
 			void	*candidate_key = (char *)table->keys + candidate * table->key_size;
 			if (table->key_ops.eq(candidate_key, key, table->key_size))
@@ -579,10 +609,9 @@ bool st_remove(SwissTable *table, const void *key)
 	uint8_t		h2 = H2(hash);
 	size_t		idx = H1(hash, table->capacity);
 
-	for (size_t probe = 0; probe < table->capacity; ++probe)
+	for (size_t probe = 0; probe < table->capacity; probe += 16)
 	{
-		size_t		pos = (idx + probe) & (table->capacity - 1);
-		size_t		grp_start = pos & ~15ULL;
+		size_t		grp_start = (idx + probe) & (table->capacity - 1);
 
 		uint32_t	matches = match_byte(&table->ctrl[grp_start], h2);
 		uint32_t	empties = match_empty(&table->ctrl[grp_start]);
@@ -590,7 +619,7 @@ bool st_remove(SwissTable *table, const void *key)
 		while (matches)
 		{
 			int		offset = trailing_zeros(matches);
-			size_t	candidate = grp_start + offset;
+			size_t	candidate = (grp_start + offset) & (table->capacity - 1);
 
 			void	*candidate_key = (char *)table->keys + candidate * table->key_size;
 			if (table->key_ops.eq(candidate_key, key, table->key_size))
@@ -599,8 +628,9 @@ bool st_remove(SwissTable *table, const void *key)
 					table->key_ops.destroy(candidate_key, table->alloc);
 				table->ctrl[candidate] = CTRL_DELETED;
 				table->size--;
+				table->deleted_count++;
 
-				if (candidate < 15)
+				if (candidate < 16)
 					table->ctrl[table->capacity + candidate] = CTRL_DELETED;
 				return (true);
 			}
