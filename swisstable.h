@@ -146,6 +146,76 @@ void		st_print_stats(SwissTable *table);
 # include <string.h>
 # include <stdio.h>
 
+/* ============== */
+/* SIMD detection */
+/* ============== */
+
+#ifndef FORCE_SCALAR
+# if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#  include <emmintrin.h>
+#  define HAVE_SSE2 1
+# elif defined(__aarch64__) || defined(_M_ARM64)
+#  include <arm_neon.h>
+#  define HAVE_NEON 1
+# endif
+#endif
+
+/* =============== */
+/* Match functions */
+/* =============== */
+
+static inline uint32_t match_byte_scalar(const uint8_t *ctrl, uint8_t target)
+{
+	uint32_t mask = 0;
+	for (int i = 0; i < 16; ++i)
+	{
+		if (ctrl[i] == target)
+			mask |= (1U << i);
+	}
+	return (mask);
+}
+
+#ifdef HAVE_SSE2
+static inline uint32_t match_byte_sse2(const uint8_t *ctrl, uint8_t target)
+{
+	__m128i	group = __mm_loadu_si128((const __m1281 *)ctrl);
+	__m128i	target_vec = __mm_set1_epi8(target);
+	__m128i cmp = __mm_cmpeq_epi8(group, target_vec);
+	return ((uint32_t)__mm_movemask_epi8(cmp));
+}
+#endif
+
+#ifdef HAVE_NEON
+static inline uint32_t match_byte_neon(const uint8_t *ctrl, uint8_t target)
+{
+	uint8x16_t	group = vld1q_u8(ctrl);
+	uint8x16_t	target_vec = vdupq_n_u8(target);
+	uint8x16_t	cmp = vceqq_u8(group, target_vec);
+
+	uint8_t		result[16];
+	vst1q_u8(result, cmp);
+
+	uint32_t	mask = 0;
+	#pragma GCC unroll 16
+	for (int i = 0; i < 16; ++i)
+		mask |= (result[i] ? 1U : 0U) << i;
+
+	return (mask);
+}
+#endif
+
+static inline uint32_t match_byte(const uint8_t *ctrl, uint8_t target)
+{
+#ifdef HAVE_SSE2
+	return (match_byte_sse2(ctrl, target));
+#elif HAVE_NEON
+	return (match_byte_neon(ctrl, target));
+#else
+	return (match_byte_scalar(ctrl, target));
+#endif
+}
+
+static inline uint32_t match_empty(const uint8_t *ctrl) { return (match_byte(ctrl, CTRL_EMPTY)); }
 /* ================ */
 /* Internal helpers */
 /* ================ */
@@ -179,19 +249,6 @@ static inline int trailing_zeros(uint32_t x)
 #endif
 }
 
-// TODO Scalar matching for now (replace with SIMD)
-static inline uint32_t match_byte(const uint8_t *ctrl, uint8_t target)
-{
-	uint32_t mask = 0;
-	for (int i = 0; i < 16; ++i)
-	{
-		if (ctrl[i] == target)
-			mask |= (1U << i);
-	}
-	return (mask);
-}
-
-static inline uint32_t match_empty(const uint8_t *ctrl) { return (match_byte(ctrl, CTRL_EMPTY)); }
 
 /* ============== */
 /* Hash functions */
