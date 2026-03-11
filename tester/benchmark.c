@@ -1,5 +1,5 @@
 #define MEMARENA_IMPLEMENTATION
-#include "../memarena.h"
+#include "../arena_allocator.h"
 
 #define SWISSTABLE_IMPLEMENTATION
 #include "../swisstable.h"
