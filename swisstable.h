@@ -178,10 +178,10 @@ static inline uint32_t match_byte_scalar(const uint8_t *ctrl, uint8_t target)
 #ifdef HAVE_SSE2
 static inline uint32_t match_byte_sse2(const uint8_t *ctrl, uint8_t target)
 {
-	__m128i	group = __mm_loadu_si128((const __m1281 *)ctrl);
-	__m128i	target_vec = __mm_set1_epi8(target);
-	__m128i cmp = __mm_cmpeq_epi8(group, target_vec);
-	return ((uint32_t)__mm_movemask_epi8(cmp));
+	__m128i	group = _mm_loadu_si128((const __m128i *)ctrl);
+	__m128i	target_vec = _mm_set1_epi8(target);
+	__m128i cmp = _mm_cmpeq_epi8(group, target_vec);
+	return ((uint32_t)_mm_movemask_epi8(cmp));
 }
 #endif
 
