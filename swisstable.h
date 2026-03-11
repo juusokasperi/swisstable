@@ -61,15 +61,19 @@ void		st_clear(SwissTable *table);
 
 // Insert or update key-value pair
 bool		st_insert(SwissTable *table, const void *key, void *value);
+bool		st_insert_str_fn(SwissTable *table, const char *str, void *value);
 
 // Get value pointer for key, NULL if not found
 void		*st_get(SwissTable *table, const void *key);
+void		*st_get_str_fn(SwissTable *table, const char *str);
 
 // Remove key-value pair, returns true if removed, false if key did not exist
 bool		st_remove(SwissTable *table, const void *key);
+bool		st_remove_str_fn(SwissTable *table, const char *str);
 
 // Check if key exists (same as checking if get returns null)
 bool		st_contains(SwissTable *table, const void *key);
+bool		st_contains_str_fn(SwissTable *table, const char *str);
 
 /* =================== */
 /* Capacity management */
@@ -114,19 +118,19 @@ void		st_print_stats(SwissTable *table);
 
 // st_insert_str(&map, "hello", int, 42)
 #define st_insert_str(table, str, V, val) \
-	st_insert((table), &(StringKey){strlen(str), (char *)(str)}, &(V){val})
+	st_insert_str_fn((table), (str), &(V){val})
 
 // st_get_str(&map, int, "hello")
 #define st_get_str(table, V, str) \
-	((V*)st_get((table), &(StringKey){strlen(str), (char *)(str)}))
+	(V*)st_get_str_fn((table), (str))
 
 // st_remove_str(&map, "hello")
 #define st_remove_str(table, str) \
-	st_remove((table), &(StringKey){strlen(str), (char *)(str)})
+	st_remove_str_fn((table), (str))
 
 // st_contains_str(&map, "hello")
 #define st_contains_str(table, str) \
-	st_contains((table), &(StringKey){strlen(str), (char *)(str)})
+	st_contains_str_fn((table), (str))
 
 #define swisstable_foreach(table, K, V, key_var, val_var, body) \
     for (size_t _i = 0; _i < (table)->capacity; _i++) { \
@@ -333,6 +337,32 @@ KeyOps string_key_ops(void)
 	ops.destroy = stringkey_destroy;
 
 	return (ops);
+}
+
+/* String insert/get/remove/contains wrappers */
+
+bool st_insert_str_fn(SwissTable *table, const char *str, void *value)
+{
+	StringKey key = { (uint32_t)strlen(str), (char *)str };
+	return (st_insert(table, &key, value));
+}
+
+void *st_get_str_fn(SwissTable *table, const char *str)
+{
+	StringKey key = { (uint32_t)strlen(str), (char *)str };
+	return (st_get(table, &key));
+}
+
+bool st_remove_str_fn(SwissTable *table, const char *str)
+{
+	StringKey key = { (uint32_t)strlen(str), (char *)str };
+	return (st_remove(table, &key));
+}
+
+bool st_contains_str_fn(SwissTable *table, const char *str)
+{
+	StringKey key = { (uint32_t)strlen(str), (char *)str };
+	return (st_contains(table, &key));
 }
 
 /* ================ */
